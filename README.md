@@ -1,1 +1,1 @@
-# GMA-GCN
+# GMA-GNN
