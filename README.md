@@ -1,1 +1,1 @@
-# GCMA-GCN
+# GMA-GCN
