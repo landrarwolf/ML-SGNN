@@ -1,111 +1,227 @@
-from __future__ import division
-from __future__ import print_function
-
 import argparse
-import os
-import winsound
+from pathlib import Path
 
+import numpy as np
+import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from sklearn.metrics import f1_score
-
 from config import Config
-from models import GMA_GCN
-from utils import *
+from models import MLSGNN
+from sklearn.metrics import f1_score
+from utils import accuracy, common_loss, load_data, load_graph
 
-if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    parse = argparse.ArgumentParser()
-    parse.add_argument("-d", "--dataset", help="dataset", type=str, default="citeseer")
-    parse.add_argument("-l", "--labelrate", help="labeled data for train per class", type=int, default=20)
-    args = parse.parse_args()
-    config_file = "./config/" + str(args.labelrate) + str(args.dataset) + ".ini"
-    config = Config(config_file)
+PROJECT_DIR = Path(__file__).resolve().parent
 
-    cuda = not config.no_cuda and torch.cuda.is_available()
-    use_seed = not config.no_seed
-    if use_seed:
-        np.random.seed(config.seed)
-        torch.manual_seed(config.seed)
-        if cuda:
-            torch.cuda.manual_seed(config.seed)
 
-    # load data
-    sadj, fadj_1, fadj_2, fadj_3, ppmi = load_graph(args.labelrate, config)
-    features, labels, idx_train, idx_test = load_data(config)
-    # idx_train: 120 240 360  idx_test: 1000 # 20, 40, 60 labeled nodes per class
-    model = GMA_GCN(nfeat=config.fdim,
-                    nhid1=config.nhid1,
-                    nhid2=config.nhid2,
-                    nclass=config.class_num,
-                    n=config.n,
-                    dropout=config.dropout)  #
-    if cuda:
-        model.cuda()
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Train ML-SGNN for semi-supervised node classification."
+    )
+    parser.add_argument(
+        "-d",
+        "--dataset",
+        default="citeseer",
+        help="dataset name used by the configuration file (default: citeseer)",
+    )
+    parser.add_argument(
+        "-l",
+        "--label-rate",
+        "--labelrate",
+        dest="label_rate",
+        type=int,
+        default=20,
+        help="number of labeled training nodes per class (default: 20)",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=Path,
+        help="path to an INI configuration file; inferred when omitted",
+    )
+    return parser
+
+
+def resolve_config_path(args):
+    if args.config is not None:
+        return args.config
+    filename = "{}{}.ini".format(args.label_rate, args.dataset)
+    return PROJECT_DIR / "config" / filename
+
+
+def set_random_seed(seed, use_cuda):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if use_cuda:
+        torch.cuda.manual_seed_all(seed)
+
+
+def evaluate(
+    model,
+    features,
+    labels,
+    test_indices,
+    structure_adjacency,
+    feature_adjacencies,
+    semantic_adjacency,
+):
+    model.eval()
+    with torch.no_grad():
+        output, _, _, _, embedding = model(
+            features,
+            structure_adjacency,
+            feature_adjacencies[0],
+            feature_adjacencies[1],
+            feature_adjacencies[2],
+            semantic_adjacency,
+        )
+
+    test_accuracy = accuracy(output[test_indices], labels[test_indices])
+    predictions = output[test_indices].argmax(dim=1).cpu().numpy()
+    test_labels = labels[test_indices].cpu().numpy()
+    macro_f1 = f1_score(test_labels, predictions, average="macro")
+    return test_accuracy.item(), float(macro_f1), embedding
+
+
+def train_epoch(
+    model,
+    optimizer,
+    config,
+    epoch,
+    features,
+    labels,
+    train_indices,
+    test_indices,
+    structure_adjacency,
+    feature_adjacencies,
+    semantic_adjacency,
+):
+    model.train()
+    optimizer.zero_grad()
+
+    output, feature_embedding, topology_embedding, semantic_embedding, _ = model(
+        features,
+        structure_adjacency,
+        feature_adjacencies[0],
+        feature_adjacencies[1],
+        feature_adjacencies[2],
+        semantic_adjacency,
+    )
+
+    classification_loss = F.nll_loss(output[train_indices], labels[train_indices])
+    if config.beta == 0 and config.theta == 0:
+        loss = classification_loss
+    else:
+        topology_semantic_loss = common_loss(topology_embedding, semantic_embedding)
+        topology_feature_loss = common_loss(topology_embedding, feature_embedding)
+        loss = (
+            classification_loss
+            + config.beta * topology_semantic_loss
+            + config.theta * topology_feature_loss
+        )
+
+    train_accuracy = accuracy(output[train_indices], labels[train_indices])
+    loss.backward()
+    optimizer.step()
+
+    test_accuracy, macro_f1, _ = evaluate(
+        model,
+        features,
+        labels,
+        test_indices,
+        structure_adjacency,
+        feature_adjacencies,
+        semantic_adjacency,
+    )
+
+    print(
+        "epoch:{:04d}".format(epoch),
+        "loss:{:.4f}".format(loss.item()),
+        "train_acc:{:.4f}".format(train_accuracy.item()),
+        "test_acc:{:.4f}".format(test_accuracy),
+        "test_macro_f1:{:.4f}".format(macro_f1),
+    )
+    return loss.item(), test_accuracy, macro_f1
+
+
+def run(args):
+    config = Config(resolve_config_path(args))
+    use_cuda = not config.no_cuda and torch.cuda.is_available()
+
+    if not config.no_seed:
+        set_random_seed(config.seed, use_cuda)
+
+    (
+        structure_adjacency,
+        feature_adjacency_1,
+        feature_adjacency_2,
+        feature_adjacency_3,
+        semantic_adjacency,
+    ) = load_graph(args.dataset, config)
+    features, labels, train_indices, test_indices = load_data(config)
+    feature_adjacencies = (
+        feature_adjacency_1,
+        feature_adjacency_2,
+        feature_adjacency_3,
+    )
+
+    model = MLSGNN(
+        nfeat=config.fdim,
+        nhid1=config.nhid1,
+        nhid2=config.nhid2,
+        nclass=config.class_num,
+        n=config.n,
+        dropout=config.dropout,
+    )
+
+    if use_cuda:
+        model = model.cuda()
         features = features.cuda()
-        sadj = sadj.cuda()
-        fadj_1 = fadj_1.cuda()
-        fadj_2 = fadj_2.cuda()
-        fadj_3 = fadj_3.cuda()
-        ppmi = ppmi.cuda()
         labels = labels.cuda()
-        idx_train = idx_train.cuda()
-        idx_test = idx_test.cuda()
+        train_indices = train_indices.cuda()
+        test_indices = test_indices.cuda()
+        structure_adjacency = structure_adjacency.cuda()
+        feature_adjacencies = tuple(
+            adjacency.cuda() for adjacency in feature_adjacencies
+        )
+        semantic_adjacency = semantic_adjacency.cuda()
 
-    optimizer = optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    optimizer = optim.Adam(
+        model.parameters(), lr=config.lr, weight_decay=config.weight_decay
+    )
 
-    # train
-    def train(model, epochs):
-        model.train()
-        optimizer.zero_grad()
-        output, fadj, str, sem, emb = model(features, sadj, fadj_1, fadj_2, fadj_3, ppmi)
-        loss_class = F.nll_loss(output[idx_train], labels[idx_train])
-        if config.beta == 0 and config.theta == 0:
-            loss = loss_class
-        else:
-            loss_com_1 = common_loss(str, sem)
-            loss_com_2 = common_loss(str, fadj)
-            loss = loss_class + config.beta * loss_com_1 + config.theta * loss_com_2
-        acc = accuracy(output[idx_train], labels[idx_train])
-        loss.backward()
-        optimizer.step()
-        acc_test, macro_f1, emb_test = main_test(model)
-
-        print('e:{}'.format(epochs),
-              'ltr: {:.4f}'.format(loss.item()),
-              'atr: {:.4f}'.format(acc.item()),
-              'ate: {:.4f}'.format(acc_test.item()),
-              'f1te:{:.4f}'.format(macro_f1.item()),
-              )
-        return loss.item(), acc_test.item(), macro_f1.item(), emb_test
-
-    # test
-    def main_test(model):
-        model.eval()
-        output, fadj, str, sem, emb = model(features, sadj, fadj_1, fadj_2, fadj_3, ppmi)
-        acc_test = accuracy(output[idx_test], labels[idx_test])
-        label_max = []
-        for idx in idx_test:
-            label_max.append(torch.argmax(output[idx]).item())
-        labelcpu = labels[idx_test].data.cpu()
-        macro_f1 = f1_score(labelcpu, label_max, average='macro')
-        return acc_test, macro_f1, emb
-
-
-    #
-    acc_max = 0
-    f1_max = 0
-    epoch_max = 0
+    best_accuracy = 0.0
+    best_macro_f1 = 0.0
+    best_epoch = 0
 
     for epoch in range(config.epochs):
-        loss, acc_test, macro_f1, emb = train(model, epoch)
-        if acc_test >= acc_max:
-            acc_max = acc_test
-            f1_max = macro_f1
-            epoch_max = epoch
+        _, test_accuracy, macro_f1 = train_epoch(
+            model,
+            optimizer,
+            config,
+            epoch,
+            features,
+            labels,
+            train_indices,
+            test_indices,
+            structure_adjacency,
+            feature_adjacencies,
+            semantic_adjacency,
+        )
+        if test_accuracy >= best_accuracy:
+            best_accuracy = test_accuracy
+            best_macro_f1 = macro_f1
+            best_epoch = epoch
 
-    print('epoch:{}'.format(epoch_max),
-          'acc_max: {:.4f}'.format(acc_max),
-          'f1_max: {:.4f}'.format(f1_max))
+    print(
+        "best_epoch:{}".format(best_epoch),
+        "best_test_acc:{:.4f}".format(best_accuracy),
+        "best_test_macro_f1:{:.4f}".format(best_macro_f1),
+    )
 
-winsound.PlaySound("SystemExit", winsound.SND_ALIAS)
+
+def main():
+    run(build_parser().parse_args())
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,24 @@
+name: Code quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check
+      - name: Check formatting
+        run: ruff format --check ML-SGNN
+      - name: Compile Python sources
+        run: python -m compileall -q ML-SGNN
