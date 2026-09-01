@@ -1,0 +1,6 @@
+# Legacy environment used for the original experiments (Python 3.7).
+torch==1.1.0
+numpy==1.16.2
+scipy==1.3.1
+scikit-learn==0.21.3
+networkx==2.4

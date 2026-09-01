@@ -1,50 +1,52 @@
-import numpy as np
-from numpy import inf
-from scipy import sparse
-import random
 import itertools
 import math
+import random
+
+import numpy as np
 import scipy.sparse as sp
-import scipy
+from numpy import inf
 
 
-def diffusion_fun_sparse(A):
-    n, m = A.shape
-    A_with_selfloop = A + sp.identity(n, format='csc')
+def diffusion_fun_sparse(adjacency):
+    n, m = adjacency.shape
+    A_with_selfloop = adjacency + sp.identity(n, format="csc")
     diags = A_with_selfloop.sum(axis=1).flatten()
 
-    with scipy.errstate(divide='ignore'):
-        diags_sqrt = 1.0 / scipy.sqrt(diags)
-    diags_sqrt[scipy.isinf(diags_sqrt)] = 0
-    DH = sp.spdiags(diags_sqrt, [0], m, n, format='csc')
+    with np.errstate(divide="ignore"):
+        diags_sqrt = 1.0 / np.sqrt(diags)
+    diags_sqrt[np.isinf(diags_sqrt)] = 0
+    DH = sp.spdiags(diags_sqrt, [0], m, n, format="csc")
     d = DH.dot(A_with_selfloop.dot(DH))
     return d
 
 
-def _normalize_diffusion_matrix(A):
-    n, m = A.shape
-    A_with_selfloop = A
+def _normalize_diffusion_matrix(adjacency):
+    n, m = adjacency.shape
+    A_with_selfloop = adjacency
     diags = A_with_selfloop.sum(axis=1).flatten()
 
-    with scipy.errstate(divide='ignore'):
-        diags_sqrt = 1.0 / scipy.sqrt(diags)
-    diags_sqrt[scipy.isinf(diags_sqrt)] = 0
-    DH = sp.spdiags(diags_sqrt, [0], m, n, format='csc')
+    with np.errstate(divide="ignore"):
+        diags_sqrt = 1.0 / np.sqrt(diags)
+    diags_sqrt[np.isinf(diags_sqrt)] = 0
+    DH = sp.spdiags(diags_sqrt, [0], m, n, format="csc")
     d = DH.dot(A_with_selfloop.dot(DH))
     return d
 
 
 # return normalized adjcent matrix plus PPMI
-def diffusion_fun_improved(A, sampling_num=100, path_len=3,
-                           self_loop=True, spars=False):
-    shape = A.shape
+def diffusion_fun_improved(
+    A, sampling_num=100, path_len=3, self_loop=True, spars=False
+):
     print("Do the sampling...")
     mat = _diffusion_fun_sampling(
-        A, sampling_num=sampling_num, path_len=path_len,
-        self_loop=self_loop, spars=spars)
+        A,
+        sampling_num=sampling_num,
+        path_len=path_len,
+        self_loop=self_loop,
+        spars=spars,
+    )
     print("Calculating the PPMI...")
     # mat is a sparse lil_matrix
-    pmi = None
     if spars:
         pmi = _PPMI_sparse(mat)
     else:
@@ -55,17 +57,21 @@ def diffusion_fun_improved(A, sampling_num=100, path_len=3,
     Degree = np.diag(dig)
     Degree_normalized = Degree ** (-0.5)
     Degree_normalized[Degree_normalized == inf] = 0.0
-    Diffusion = np.dot(
-        np.dot(Degree_normalized, A_with_selfloop), Degree_normalized)
+    Diffusion = np.dot(np.dot(Degree_normalized, A_with_selfloop), Degree_normalized)
     return Diffusion
 
 
-def diffusion_fun_improved_ppmi_dynamic_sparsity(A, sampling_num=100, path_len=2,
-                                                 self_loop=True, spars=True, k=1.0):
+def diffusion_fun_improved_ppmi_dynamic_sparsity(
+    A, sampling_num=100, path_len=2, self_loop=True, spars=True, k=1.0
+):
     print("Do the sampling...")
     mat = _diffusion_fun_sampling(
-        A, sampling_num=sampling_num, path_len=path_len,
-        self_loop=self_loop, spars=spars)
+        A,
+        sampling_num=sampling_num,
+        path_len=path_len,
+        self_loop=self_loop,
+        spars=spars,
+    )
     print("Calculating the PPMI...")
     # mat is a sparse dok_matrix
     if spars:
@@ -95,16 +101,18 @@ def _shift(mat, k):
     return mat
 
 
-def _diffusion_fun_sampling(A, sampling_num=100, path_len=3, self_loop=True, spars=False):
+def _diffusion_fun_sampling(
+    A, sampling_num=100, path_len=3, self_loop=True, spars=False
+):
     # the will return diffusion matrix
     re = None
     if not spars:
         re = np.zeros(A.shape)
     else:
-        re = sparse.dok_matrix(A.shape, dtype=np.float32)
+        re = sp.dok_matrix(A.shape, dtype=np.float32)
 
     if self_loop:
-        A_with_selfloop = A + sparse.identity(A.shape[0], format="csr")
+        A_with_selfloop = A + sp.identity(A.shape[0], format="csr")
     else:
         A_with_selfloop = A
 
@@ -148,7 +156,7 @@ def _PPMI(mat):
     rowMat = np.ones((nrows, ncols), dtype=np.float32)
     for i in range(nrows):
         rowMat[i, :] = 0 if rowTotals[i] == 0 else rowMat[i, :] * (1.0 / rowTotals[i])
-    colMat = np.ones((nrows, ncols), dtype=np.float)
+    colMat = np.ones((nrows, ncols), dtype=np.float64)
     for j in range(ncols):
         colMat[:, j] = 0 if colTotals[j] == 0 else colMat[:, j] * (1.0 / colTotals[j])
     P = N * mat * rowMat * colMat
@@ -180,8 +188,7 @@ def rampup(epoch, scaled_unsup_weight_max, exp=5.0, rampup_length=80):
         p = max(0.0, float(epoch)) / float(rampup_length)
         p = 1.0 - p
         return math.exp(-p * p * exp) * scaled_unsup_weight_max
-    else:
-        return 1.0 * scaled_unsup_weight_max
+    return 1.0 * scaled_unsup_weight_max
 
 
 def get_scaled_unsup_weight_max(num_labels, X_train_shape, unsup_weight_max=100.0):

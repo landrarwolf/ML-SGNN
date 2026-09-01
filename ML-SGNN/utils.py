@@ -1,145 +1,119 @@
+import numpy as np
+import scipy.sparse as sp
 import torch
 
-from semantic import *
 
-
-# common_loss
-def common_loss(emb1, emb2):
-    emb1 = emb1 - torch.mean(emb1, dim=0, keepdim=True)
-    emb2 = emb2 - torch.mean(emb2, dim=0, keepdim=True)
-    emb1 = torch.nn.functional.normalize(emb1, p=2, dim=1)
-    emb2 = torch.nn.functional.normalize(emb2, p=2, dim=1)
-    cov1 = torch.matmul(emb1, emb1.t())
-    cov2 = torch.matmul(emb2, emb2.t())
-    cost = torch.mean((cov1 - cov2) ** 2)
-    return cost
+def common_loss(embedding_1, embedding_2):
+    """Measure disagreement between two centered embedding Gram matrices."""
+    embedding_1 = embedding_1 - torch.mean(embedding_1, dim=0, keepdim=True)
+    embedding_2 = embedding_2 - torch.mean(embedding_2, dim=0, keepdim=True)
+    embedding_1 = torch.nn.functional.normalize(embedding_1, p=2, dim=1)
+    embedding_2 = torch.nn.functional.normalize(embedding_2, p=2, dim=1)
+    covariance_1 = torch.matmul(embedding_1, embedding_1.t())
+    covariance_2 = torch.matmul(embedding_2, embedding_2.t())
+    return torch.mean((covariance_1 - covariance_2) ** 2)
 
 
 def accuracy(output, labels):
-    preds = output.max(1)[1].type_as(labels)
-    correct = preds.eq(labels).double()
-    correct = correct.sum()
+    predictions = output.max(dim=1)[1].type_as(labels)
+    correct = predictions.eq(labels).double().sum()
     return correct / len(labels)
 
 
-def sparse_mx_to_torch_sparse_tensor(sparse_mx):
-    """Convert a scipy sparse matrix to a torch sparse tensor."""
-    sparse_mx = sparse_mx.tocoo().astype(np.float32)
-    indices = torch.from_numpy(np.vstack((sparse_mx.row, sparse_mx.col)).astype(np.int64))
-    values = torch.from_numpy(sparse_mx.data)
-    shape = torch.Size(sparse_mx.shape)
+def sparse_mx_to_torch_sparse_tensor(sparse_matrix):
+    """Convert a SciPy sparse matrix to a PyTorch sparse tensor."""
+    sparse_matrix = sparse_matrix.tocoo().astype(np.float32)
+    indices = torch.from_numpy(
+        np.vstack((sparse_matrix.row, sparse_matrix.col)).astype(np.int64)
+    )
+    values = torch.from_numpy(sparse_matrix.data)
+    shape = torch.Size(sparse_matrix.shape)
     return torch.sparse.FloatTensor(indices, values, shape)
 
 
 def parse_index_file(filename):
-    """Parse index file."""
-    index = []
-    for line in open(filename):
-        index.append(int(line.strip()))
-    return index
+    """Read one integer node index per line."""
+    with open(filename) as index_file:
+        return [int(line.strip()) for line in index_file]
 
 
-def sample_mask(idx, l):
-    """Create mask."""
-    mask = np.zeros(l)
-    mask[idx] = 1
-    return np.array(mask, dtype=np.bool)
+def sample_mask(indices, length):
+    """Create a Boolean mask from a collection of indices."""
+    mask = np.zeros(length)
+    mask[indices] = 1
+    return np.asarray(mask, dtype=bool)
 
 
-def sparse_to_tuple(sparse_mx):
-    """Convert sparse matrix to tuple representation."""
+def sparse_to_tuple(sparse_matrix):
+    """Convert a sparse matrix, or list of matrices, to tuple form."""
 
-    def to_tuple(mx):
-        if not sp.isspmatrix_coo(mx):
-            mx = mx.tocoo()
-        coords = np.vstack((mx.row, mx.col)).transpose()
-        values = mx.data
-        shape = mx.shape
-        return coords, values, shape
+    def to_tuple(matrix):
+        if not sp.isspmatrix_coo(matrix):
+            matrix = matrix.tocoo()
+        coordinates = np.vstack((matrix.row, matrix.col)).transpose()
+        return coordinates, matrix.data, matrix.shape
 
-    if isinstance(sparse_mx, list):
-        for i in range(len(sparse_mx)):
-            sparse_mx[i] = to_tuple(sparse_mx[i])
-    else:
-        sparse_mx = to_tuple(sparse_mx)
-
-    return sparse_mx
+    if isinstance(sparse_matrix, list):
+        return [to_tuple(matrix) for matrix in sparse_matrix]
+    return to_tuple(sparse_matrix)
 
 
-def normalize(mx):
-    """Row-normalize sparse matrix"""
-    rowsum = np.array(mx.sum(1))
-    r_inv = np.power(rowsum, -1).flatten()
-    r_inv[np.isinf(r_inv)] = 0.
-    r_mat_inv = sp.diags(r_inv)
-    mx = r_mat_inv.dot(mx)
-    return mx
+def normalize(matrix):
+    """Row-normalize a sparse matrix."""
+    row_sum = np.asarray(matrix.sum(axis=1))
+    inverse_row_sum = np.power(row_sum, -1).flatten()
+    inverse_row_sum[np.isinf(inverse_row_sum)] = 0.0
+    return sp.diags(inverse_row_sum).dot(matrix)
 
 
 def load_data(config):
-    f = np.loadtxt(config.feature_path, dtype=float)
-    l = np.loadtxt(config.label_path, dtype=int)
-    test = np.loadtxt(config.test_path, dtype=int)
-    train = np.loadtxt(config.train_path, dtype=int)
-    features = sp.csr_matrix(f, dtype=np.float32)
-    features = torch.FloatTensor(np.array(features.todense()))
+    feature_array = np.loadtxt(config.feature_path, dtype=float)
+    label_array = np.loadtxt(config.label_path, dtype=int)
+    test_indices = np.loadtxt(config.test_path, dtype=int)
+    train_indices = np.loadtxt(config.train_path, dtype=int)
 
-    idx_test = test.tolist()
-    idx_train = train.tolist()
+    feature_matrix = sp.csr_matrix(feature_array, dtype=np.float32)
+    features = torch.FloatTensor(np.asarray(feature_matrix.todense()))
+    labels = torch.LongTensor(np.asarray(label_array))
+    train_indices = torch.LongTensor(train_indices.tolist())
+    test_indices = torch.LongTensor(test_indices.tolist())
 
-    idx_train = torch.LongTensor(idx_train)
-    idx_test = torch.LongTensor(idx_test)
-
-    label = torch.LongTensor(np.array(l))
-
-    return features, label, idx_train, idx_test
+    return features, labels, train_indices, test_indices
 
 
-def load_graph(dataset, config):
-    # feature graph
-    featuregraph_path = config.featuregraph_path_1 + str(config.k) + '.txt'
-    feature_edges = np.genfromtxt(featuregraph_path, dtype=np.int32)
-    fedges = np.array(list(feature_edges), dtype=np.int32).reshape(feature_edges.shape)
-    fadj = sp.coo_matrix((np.ones(fedges.shape[0]), (fedges[:, 0], fedges[:, 1])), shape=(config.n, config.n),
-                         dtype=np.float32)
-    fadj = fadj + fadj.T.multiply(fadj.T > fadj) - fadj.multiply(fadj.T > fadj)  #
-    nfadj_1 = normalize(fadj + sp.eye(fadj.shape[0]))
+def _load_normalized_adjacency(edge_path, node_count):
+    edges = np.genfromtxt(edge_path, dtype=np.int32)
+    edges = np.atleast_2d(edges)
+    adjacency = sp.coo_matrix(
+        (np.ones(edges.shape[0]), (edges[:, 0], edges[:, 1])),
+        shape=(node_count, node_count),
+        dtype=np.float32,
+    )
+    adjacency = (
+        adjacency
+        + adjacency.T.multiply(adjacency.T > adjacency)
+        - adjacency.multiply(adjacency.T > adjacency)
+    )
+    return normalize(adjacency + sp.eye(adjacency.shape[0]))
 
-    # feature graph2
-    featuregraph_path_2 = config.featuregraph_path_2 + str(config.k) + '.txt'
-    feature_edges = np.genfromtxt(featuregraph_path_2, dtype=np.int32)
-    fedges = np.array(list(feature_edges), dtype=np.int32).reshape(feature_edges.shape)
-    fadj = sp.coo_matrix((np.ones(fedges.shape[0]), (fedges[:, 0], fedges[:, 1])), shape=(config.n, config.n),
-                         dtype=np.float32)
-    fadj = fadj + fadj.T.multiply(fadj.T > fadj) - fadj.multiply(fadj.T > fadj)  #
-    nfadj_2 = normalize(fadj + sp.eye(fadj.shape[0]))
 
-    # feature graph3
-    featuregraph_path_3 = config.featuregraph_path_3 + str(config.k) + '.txt'
-    feature_edges = np.genfromtxt(featuregraph_path_3, dtype=np.int32)
-    fedges = np.array(list(feature_edges), dtype=np.int32).reshape(feature_edges.shape)
-    fadj = sp.coo_matrix((np.ones(fedges.shape[0]), (fedges[:, 0], fedges[:, 1])), shape=(config.n, config.n),
-                         dtype=np.float32)
-    fadj = fadj + fadj.T.multiply(fadj.T > fadj) - fadj.multiply(fadj.T > fadj)  #
-    nfadj_3 = normalize(fadj + sp.eye(fadj.shape[0]))
+def load_graph(_dataset, config):
+    """Load the topology, three feature graphs, and semantic graph."""
+    feature_paths = (
+        config.featuregraph_path_1 + str(config.k) + ".txt",
+        config.featuregraph_path_2 + str(config.k) + ".txt",
+        config.featuregraph_path_3 + str(config.k) + ".txt",
+    )
+    feature_adjacencies = [
+        _load_normalized_adjacency(path, config.n) for path in feature_paths
+    ]
+    structure_adjacency = _load_normalized_adjacency(config.structgraph_path, config.n)
+    semantic_adjacency = sp.load_npz(config.ppmi_path)
 
-    # edge -> structure graph
-    struct_edges = np.genfromtxt(config.structgraph_path, dtype=np.int32)
-    sedges = np.array(list(struct_edges), dtype=np.int32).reshape(struct_edges.shape)
-    sadj = sp.coo_matrix((np.ones(sedges.shape[0]), (sedges[:, 0], sedges[:, 1])), shape=(config.n, config.n),
-                         dtype=np.float32)
-    sadj = sadj + sadj.T.multiply(sadj.T > sadj) - sadj.multiply(sadj.T > sadj)
-    nsadj = normalize(sadj + sp.eye(sadj.shape[0]))
-
-    # structure graph -> PPMI
-    ppmi = sparse.load_npz(config.ppmi_path)
-    # ppmi = diffusion_fun_improved_ppmi_dynamic_sparsity(nsadj, path_len=2, k=1.0)
-
-    nsadj = sparse_mx_to_torch_sparse_tensor(nsadj)
-    nfadj_1 = sparse_mx_to_torch_sparse_tensor(nfadj_1)
-    nfadj_2 = sparse_mx_to_torch_sparse_tensor(nfadj_2)
-    nfadj_3 = sparse_mx_to_torch_sparse_tensor(nfadj_3)
-
-    ppmi = sparse_mx_to_torch_sparse_tensor(ppmi)
-
-    return nsadj, nfadj_1, nfadj_2, nfadj_3, ppmi
+    return (
+        sparse_mx_to_torch_sparse_tensor(structure_adjacency),
+        sparse_mx_to_torch_sparse_tensor(feature_adjacencies[0]),
+        sparse_mx_to_torch_sparse_tensor(feature_adjacencies[1]),
+        sparse_mx_to_torch_sparse_tensor(feature_adjacencies[2]),
+        sparse_mx_to_torch_sparse_tensor(semantic_adjacency),
+    )

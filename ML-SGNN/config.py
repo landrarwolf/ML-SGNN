@@ -1,15 +1,16 @@
 import configparser
 
 
-class Config(object):
+class Config:
     def __init__(self, config_file):
         conf = configparser.ConfigParser()
-        try:
-            conf.read(config_file)
-        except:
-            print("loading config: %s failed" % config_file)
+        loaded_files = conf.read(str(config_file))
+        if not loaded_files:
+            raise FileNotFoundError(
+                "Configuration file not found: {}".format(config_file)
+            )
 
-        # Hyper-parameter
+        # Model hyperparameters
         self.epochs = conf.getint("Model_Setup", "epochs")
         self.lr = conf.getfloat("Model_Setup", "lr")
         self.weight_decay = conf.getfloat("Model_Setup", "weight_decay")
@@ -23,7 +24,7 @@ class Config(object):
         self.no_seed = conf.getboolean("Model_Setup", "no_seed")
         self.seed = conf.getint("Model_Setup", "seed")
 
-        # Dataset
+        # Dataset metadata and paths
         self.n = conf.getint("Data_Setting", "n")
         self.fdim = conf.getint("Data_Setting", "fdim")
         self.class_num = conf.getint("Data_Setting", "class_num")

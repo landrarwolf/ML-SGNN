@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use ML-SGNN, please cite the associated paper."
+title: "ML-SGNN"
+type: software
+authors:
+  - family-names: Lin
+    given-names: Junchao
+    orcid: "https://orcid.org/0000-0002-6173-4601"
+  - family-names: Wan
+    given-names: Yuan
+  - family-names: Xu
+    given-names: Jingwen
+  - family-names: Qi
+    given-names: Xingchen
+repository-code: "https://github.com/landrarwolf/ML-SGNN"
+license: MIT
+preferred-citation:
+  type: article
+  title: "Semantic Graph Neural Network with Multi-measure Learning for Semi-supervised Classification"
+  authors:
+    - family-names: Lin
+      given-names: Junchao
+    - family-names: Wan
+      given-names: Yuan
+    - family-names: Xu
+      given-names: Jingwen
+    - family-names: Qi
+      given-names: Xingchen
+  journal: "Engineering Applications of Artificial Intelligence"
+  volume: 140
+  year: 2025
+  doi: "10.1016/j.engappai.2024.109647"
