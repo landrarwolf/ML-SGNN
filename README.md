@@ -25,8 +25,7 @@ Attention layers combine the feature views and then aggregate the feature, topol
 │   ├── layers.py           # Graph convolution layer
 │   ├── utils.py            # Data and graph loading utilities
 │   ├── semantic.py         # Semantic graph / PPMI utilities
-│   ├── data_processing.py  # Dataset preprocessing helpers
-│   └── config/             # Per-dataset experiment configurations
+│   └── data_processing.py  # Dataset preprocessing helpers
 ├── data/                   # Compressed benchmark datasets
 ├── CITATION.cff
 └── requirements.txt
@@ -111,9 +110,6 @@ To regenerate all three feature-graph families as well, add `--generate-knn`. Th
 ## Configuration
 
 Experiment settings are read from INI files in `ML-SGNN/config/`. By convention, the filename is `<labels-per-class><dataset>.ini`, for example `20citeseer.ini`. You can also pass a configuration file explicitly with `--config`.
-
-> [!IMPORTANT]
-> The current public release does not contain the original per-dataset INI files. The expected schema is documented in [`ML-SGNN/config/README.md`](ML-SGNN/config/README.md). Add the original experiment configurations before attempting to reproduce the paper's reported numbers.
 
 ## Training
 
